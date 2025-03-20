@@ -1,0 +1,248 @@
+version: "3.8"
+
+services:
+  legend-engine:
+    image: finos/legend-engine-server:latest
+    container_name: legend-engine
+    networks:
+      - legend_internal
+    # Expose the Engine's port internally (no external ports)
+    expose:
+      - "6300"
+    environment:
+      # GitLab OAuth (use actual values via environment or .env file)
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"             # GitLab OAuth Application ID
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"     # GitLab OAuth Application Secret
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      # MongoDB connection (for session store, if applicable)
+      MONGO_HOST: legend-mongodb
+      MONGO_PORT: 27017
+      MONGO_USERNAME: "${MONGO_INITDB_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD}"
+      MONGO_DB: "legend-engine"   # database name for engine session/cache (created if not exist)
+    volumes:
+      - /storage/legend/engine:/storage/legend/engine
+    depends_on:
+      - legend-mongodb   # ensure Mongo starts before Engine (for auth store)
+
+  legend-sdlc:
+    image: finos/legend-sdlc-server:latest
+    container_name: legend-sdlc
+    networks:
+      - legend_internal
+    expose:
+      - "6100"
+    environment:
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      GITLAB_HOST: "gitlab.com"                 # Base URL for GitLab (if using custom, change it)
+      # The SDLC server needs to know where Engine is (for project build/test, if applicable):
+      ENGINE_URL: "http://legend-engine:6300"   # internal URL to Legend Engine
+      # Mongo for session store:
+      MONGO_HOST: legend-mongodb
+      MONGO_PORT: 27017
+      MONGO_USERNAME: "${MONGO_INITDB_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD}"
+      MONGO_DB: "legend-sdlc"
+    volumes:
+      - /storage/legend/sdlc:/storage/legend/sdlc
+    depends_on:
+      - legend-mongodb
+
+  legend-studio:
+    image: finos/legend-studio:latest
+    container_name: legend-studio
+    networks:
+      - legend_internal
+    expose:
+      - "9000"
+    environment:
+      # Backend service URLs for Studio to call
+      ENGINE_URL: "http://legend-engine:6300"        # Engine API endpoint for Studio
+      SDLC_URL: "http://legend-sdlc:6100"            # SDLC API endpoint for Studio
+      DEPOT_URL: "http://legend-depot:6200"          # Depot API endpoint (for project versions)
+      # OAuth configuration (Studio itself uses GitLab OAuth via Legend Shared or directly)
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      # (Studio might also use the Shared service for static content if applicable)
+      SHARED_URL: "http://legend-shared:6040"        # Example URL if Legend Shared serves some content (port assumed)
+    volumes:
+      - /storage/legend/studio:/storage/legend/studio
+    depends_on:
+      - legend-engine
+      - legend-sdlc
+      - legend-depot
+
+  legend-query:
+    image: finos/legend-query:latest
+    container_name: legend-query
+    networks:
+      - legend_internal
+    expose:
+      - "9001"
+    environment:
+      ENGINE_URL: "http://legend-engine:6300"        # Query uses Engine to execute queries
+      DEPOT_URL: "http://legend-depot:6200"          # Query uses Depot to fetch model info
+      # OAuth settings (similar to Studio)
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      SHARED_URL: "http://legend-shared:6040"
+    volumes:
+      - /storage/legend/query:/storage/legend/query
+    depends_on:
+      - legend-engine
+      - legend-depot
+
+  legend-pure-ide:
+    image: finos/legend-engine-pure-ide-light-http-server:latest
+    container_name: legend-pure-ide
+    networks:
+      - legend_internal
+    expose:
+      - "9200"
+    environment:
+      ENGINE_URL: "http://legend-engine:6300"   # Pure IDE connects to Engine (Light) for executing Pure code
+      # Pure IDE might not require separate OAuth (could be internal-only), but can be protected if needed
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+    volumes:
+      - /storage/legend/pure-ide:/storage/legend/pure-ide
+    depends_on:
+      - legend-engine
+
+  legend-shared:
+    image: finos/legend-shared-server:latest
+    container_name: legend-shared
+    networks:
+      - legend_internal
+    expose:
+      - "6040"   # Example internal port for Legend Shared (adjust if actual default differs)
+    environment:
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      MONGO_HOST: legend-mongodb
+      MONGO_PORT: 27017
+      MONGO_USERNAME: "${MONGO_INITDB_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD}"
+      MONGO_DB: "legend-auth"  # database for shared auth/session data
+    volumes:
+      - /storage/legend/shared:/storage/legend/shared
+    depends_on:
+      - legend-mongodb
+
+  legend-depot:
+    image: finos/legend-depot-server:latest
+    container_name: legend-depot
+    networks:
+      - legend_internal
+    expose:
+      - "6200"
+    environment:
+      # Depot server will connect to the Depot Store service
+      DEPOT_STORE_URL: "http://legend-depot-store:6201" 
+      # OAuth (to secure Depot endpoints)
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+      MONGO_HOST: legend-mongodb
+      MONGO_PORT: 27017
+      MONGO_USERNAME: "${MONGO_INITDB_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD}"
+      MONGO_DB: "legend-depot"   # if Depot server itself uses Mongo (it might primarily use Depot Store API instead)
+    volumes:
+      - /storage/legend/depot:/storage/legend/depot
+    depends_on:
+      - legend-depot-store
+      - legend-mongodb
+
+  legend-depot-store:
+    image: finos/legend-depot-store-server:latest
+    container_name: legend-depot-store
+    networks:
+      - legend_internal
+    expose:
+      - "6201"
+    environment:
+      # If Depot Store uses Mongo as backing store:
+      MONGO_HOST: legend-mongodb
+      MONGO_PORT: 27017
+      MONGO_USERNAME: "${MONGO_INITDB_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD}"
+      MONGO_DB: "legend-depot-store"
+      # (If Depot Store were to use relational storage, you'd provide Postgres connection info here instead)
+      # OAuth (Depot Store might also enforce auth on its API)
+      GITLAB_APP_ID: "${GITLAB_APP_ID}"
+      GITLAB_APP_SECRET: "${GITLAB_APP_SECRET}"
+      GITLAB_OAUTH_AUTHORIZE_URL: "https://gitlab.com/oauth/authorize"
+      GITLAB_OAUTH_TOKEN_URL: "https://gitlab.com/oauth/token"
+    volumes:
+      - /storage/legend/depot-store:/storage/legend/depot-store
+    depends_on:
+      - legend-mongodb
+
+  legend-postgres:
+    image: postgres:latest
+    container_name: legend-postgres
+    networks:
+      - legend_internal
+    # Expose no ports externally
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:=legend}"         # default to 'legend' if not set
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:=legend}" # default password (override in env for security)
+      POSTGRES_DB: "${POSTGRES_DB:=legend}"             # default database name
+    volumes:
+      - /storage/legend/postgres:/var/lib/postgresql/data
+    # No external depends (Postgres should start before any service that needs it; currently none strictly require at startup)
+    restart: unless-stopped
+
+  legend-mongodb:
+    image: mongo:latest
+    container_name: legend-mongodb
+    networks:
+      - legend_internal
+    expose:
+      - "27017"
+    command: ["--auth"]   # enable authentication
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_INITDB_ROOT_USERNAME:=legend_root}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD:=legend_pass}"
+      MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE:=admin}"
+    volumes:
+      - /storage/legend/mongodb:/data/db
+    restart: unless-stopped
+
+  legend-nginx:
+    image: nginx:latest
+    container_name: legend-nginx
+    networks:
+      - legend_internal
+    # Expose ports 80 and 443 to the host for HTTP/HTTPS
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /storage/certs:/etc/nginx/certs:ro               # Mount SSL certificates (e.g., server.crt, server.key)
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro            # Custom Nginx configuration for Legend
+    depends_on:
+      - legend-studio
+      - legend-query
+      - legend-pure-ide
+    restart: unless-stopped
+
+networks:
+  legend_internal:
+    driver: bridge
