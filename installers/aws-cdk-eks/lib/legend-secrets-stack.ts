@@ -12,8 +12,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
  *   5) grafanaAdminPassword
  *
  * In practice, you can store truly non-sensitive items (like domainName/certArn) in Parameter Store
- * or pass them in as context. But to fully satisfy "each secret is stored separately in Secrets Manager,"
- * we create distinct secrets below.
+ * or pass them in as context. Those are stores as secrets here to be conservative.
  */
 export class LegendSecretsStack extends cdk.Stack {
   public readonly domainNameSecret: secretsmanager.Secret;
@@ -31,7 +30,7 @@ export class LegendSecretsStack extends cdk.Stack {
       alias: 'legend-secrets-key'
     });
 
-    // 1) Domain Name (not truly secret, but stored in Secrets Manager per your request)
+    // 1) Domain Name (not truly secret, but stored in Secrets Manager to be conservative)
     this.domainNameSecret = new secretsmanager.Secret(this, 'LegendDomainNameSecret', {
       secretName: 'legend/domainName',
       description: 'Legend domain name',
